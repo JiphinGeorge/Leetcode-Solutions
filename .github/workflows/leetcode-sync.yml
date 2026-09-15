@@ -15,18 +15,37 @@ jobs:
 
     steps:
 
+      # ------------------------------------------------------
+      # Checkout repository
+      # ------------------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+
+      # ------------------------------------------------------
+      # Setup Python
+      # ------------------------------------------------------
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+
+      # ------------------------------------------------------
+      # Install dependencies
+      # ------------------------------------------------------
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
+
+
+      # ------------------------------------------------------
+      # Run LeetCode Sync
+      # ------------------------------------------------------
 
       - name: Sync LeetCode submissions
         env:
@@ -35,16 +54,59 @@ jobs:
         run: |
           python scripts/leetcode_sync.py
 
+
+      # ------------------------------------------------------
+      # Commit and Push
+      # ------------------------------------------------------
+
       - name: Commit and push
         run: |
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add solutions/
 
+          # --------------------------------------------------
+          # Check whether there are changes
+          # --------------------------------------------------
+
           if git diff --cached --quiet; then
+
             echo "No new LeetCode solutions."
+
           else
-            git commit -m "[LeetCode Sync] Update solutions"
+
+            # ------------------------------------------------
+            # Use the old LeetCode Sync commit message
+            # ------------------------------------------------
+
+            if [ -f commit_message.txt ]; then
+
+              COMMIT_MESSAGE=$(cat commit_message.txt)
+
+              echo "Using commit message:"
+              echo "$COMMIT_MESSAGE"
+
+            else
+
+              COMMIT_MESSAGE="[LeetCode Sync] Update solutions"
+
+              echo "Commit message file not found."
+              echo "Using fallback message."
+
+            fi
+
+            # ------------------------------------------------
+            # Commit
+            # ------------------------------------------------
+
+            git commit -m "$COMMIT_MESSAGE"
+
+            # ------------------------------------------------
+            # Push
+            # ------------------------------------------------
+
             git push
+
           fi
