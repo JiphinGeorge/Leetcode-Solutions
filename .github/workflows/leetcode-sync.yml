@@ -32,7 +32,6 @@ jobs:
         env:
           LEETCODE_SESSION: ${{ secrets.LEETCODE_SESSION }}
           LEETCODE_CSRF_TOKEN: ${{ secrets.LEETCODE_CSRF_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python scripts/leetcode_sync.py
 
