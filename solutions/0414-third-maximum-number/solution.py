@@ -1,9 +1,6 @@
 class Solution(object):
     def thirdMax(self, nums):
-        """
-        :type nums: List[int]
-        :rtype: int
-        """
+        
         dis=list(set(nums))
         dis.sort(reverse=True)
         if len(dis)>=3:
