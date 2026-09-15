@@ -1,136 +1,93 @@
 import os
+import re
 import shutil
 import requests
 from pathlib import Path
 
 
-# =========================================================
+# ============================================================
 # CONFIGURATION
-# =========================================================
+# ============================================================
 
 LEETCODE_GRAPHQL = "https://leetcode.com/graphql/"
-
-SESSION = os.environ["LEETCODE_SESSION"]
-CSRF_TOKEN = os.environ["LEETCODE_CSRF_TOKEN"]
-
 DESTINATION = Path("solutions")
 
+LEETCODE_SESSION = os.getenv("LEETCODE_SESSION")
+LEETCODE_CSRF_TOKEN = os.getenv("LEETCODE_CSRF_TOKEN")
 
-# =========================================================
-# LEETCODE SESSION
-# =========================================================
+if not LEETCODE_SESSION or not LEETCODE_CSRF_TOKEN:
+    raise Exception("❌ LeetCode secrets are missing.")
+
+
+# ============================================================
+# SESSION
+# ============================================================
 
 session = requests.Session()
 
 session.cookies.set(
     "LEETCODE_SESSION",
-    SESSION,
+    LEETCODE_SESSION,
     domain=".leetcode.com"
 )
 
 session.cookies.set(
     "csrftoken",
-    CSRF_TOKEN,
+    LEETCODE_CSRF_TOKEN,
     domain=".leetcode.com"
 )
 
-
-# =========================================================
-# HEADERS
-# =========================================================
-
-HEADERS = {
+session.headers.update({
     "Content-Type": "application/json",
-
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/153.0.0.0 Safari/537.36"
     ),
-
     "Referer": "https://leetcode.com/",
     "Origin": "https://leetcode.com",
-    "X-CSRFToken": CSRF_TOKEN,
-}
+    "X-CSRFToken": LEETCODE_CSRF_TOKEN,
+})
 
 
-# =========================================================
-# GRAPHQL REQUEST
-# =========================================================
+# ============================================================
+# GRAPHQL HELPER
+# ============================================================
 
-def graphql(
-    operation_name,
-    query,
-    variables=None
-):
+def graphql(operation_name, query, variables=None):
 
     payload = {
         "operationName": operation_name,
         "query": query,
-        "variables": variables or {},
+        "variables": variables or {}
     }
 
     response = session.post(
         LEETCODE_GRAPHQL,
-        headers=HEADERS,
         json=payload,
-        timeout=30,
+        timeout=30
     )
-
-    # -----------------------------------------------------
-    # HTTP error
-    # -----------------------------------------------------
 
     if response.status_code != 200:
-
-        print(
-            f"❌ LeetCode HTTP error: "
-            f"{response.status_code}"
-        )
-
-        print(
-            response.text[:1000]
-        )
-
-        response.raise_for_status()
-
-    # -----------------------------------------------------
-    # Convert response to JSON
-    # -----------------------------------------------------
-
-    result = response.json()
-
-    # -----------------------------------------------------
-    # GraphQL error
-    # -----------------------------------------------------
-
-    if result.get("errors"):
-
-        print("❌ GraphQL error:")
-
-        for error in result["errors"]:
-
-            print(
-                error.get(
-                    "message",
-                    error
-                )
-            )
-
+        print("❌ GraphQL HTTP Error:", response.status_code)
+        print(response.text[:1000])
         return None
 
-    return result.get("data")
+    data = response.json()
+
+    if data.get("errors"):
+        print("❌ GraphQL Error:")
+        print(data["errors"])
+        return None
+
+    return data.get("data")
 
 
-# =========================================================
+# ============================================================
 # GET LOGGED-IN USER
-# =========================================================
+# ============================================================
 
 def get_user():
-
-    print(
-        "🔎 Checking LeetCode login..."
-    )
 
     query = """
     query globalData {
@@ -144,83 +101,23 @@ def get_user():
     }
     """
 
-    data = graphql(
-        "globalData",
-        query
-    )
+    data = graphql("globalData", query)
 
     if not data:
-
         return None
 
-    user_status = data.get(
-        "userStatus"
-    )
-
-    if not user_status:
-
-        print(
-            "❌ userStatus was not returned."
-        )
-
-        return None
-
-    signed_in = user_status.get(
-        "isSignedIn"
-    )
-
-    username = user_status.get(
-        "username"
-    )
-
-    print(
-        f"🔐 Signed in: {signed_in}"
-    )
-
-    if not signed_in:
-
-        print(
-            "❌ LeetCode session is not authenticated."
-        )
-
-        return None
-
-    if not username:
-
-        print(
-            "❌ Username is empty."
-        )
-
-        return None
-
-    print(
-        f"👤 LeetCode user: {username}"
-    )
-
-    return username
+    return data.get("userStatus")
 
 
-# =========================================================
+# ============================================================
 # GET RECENT ACCEPTED SUBMISSIONS
-# =========================================================
+# ============================================================
 
 def get_recent_submissions(username):
 
-    print(
-        "📥 Getting recent accepted submissions..."
-    )
-
     query = """
-    query recentAcSubmissions(
-        $username: String!,
-        $limit: Int!
-    ) {
-
-        recentAcSubmissionList(
-            username: $username,
-            limit: $limit
-        ) {
-
+    query recentAcSubmissions($username: String!, $limit: Int!) {
+        recentAcSubmissionList(username: $username, limit: $limit) {
             id
             title
             titleSlug
@@ -229,355 +126,479 @@ def get_recent_submissions(username):
     }
     """
 
+    variables = {
+        "username": username,
+        "limit": 20
+    }
+
     data = graphql(
         "recentAcSubmissions",
         query,
-        {
-            "username": username,
-            "limit": 20,
-        }
+        variables
     )
 
     if not data:
-
         return []
 
-    return (
-        data.get(
-            "recentAcSubmissionList"
-        ) or []
-    )
+    return data.get("recentAcSubmissionList", [])
 
 
-# =========================================================
-# GET PROBLEM NUMBER
-# =========================================================
+# ============================================================
+# GET QUESTION NUMBER
+# ============================================================
 
 def get_problem_number(slug):
 
     query = """
-    query questionData(
-        $titleSlug: String!
-    ) {
-
-        question(
-            titleSlug: $titleSlug
-        ) {
-
+    query questionData($titleSlug: String!) {
+        question(titleSlug: $titleSlug) {
             questionId
-            title
-            titleSlug
         }
     }
     """
 
+    variables = {
+        "titleSlug": slug
+    }
+
     data = graphql(
         "questionData",
         query,
-        {
-            "titleSlug": slug
-        }
+        variables
     )
 
-    if not data:
-
+    if not data or not data.get("question"):
         return None
 
-    question = data.get(
-        "question"
-    )
-
-    if not question:
-
-        return None
-
-    return question.get(
-        "questionId"
-    )
+    return data["question"].get("questionId")
 
 
-# =========================================================
-# GET SUBMISSION CODE
-# =========================================================
+# ============================================================
+# GET SUBMISSION DETAILS
+#
+# IMPORTANT:
+# We retrieve runtime/memory information here so that the
+# GitHub commit message can use the OLD FORMAT.
+# ============================================================
 
-def get_submission_details(
-    submission_id
-):
-
-    print(
-        f"   🔍 Getting code "
-        f"for submission {submission_id}..."
-    )
+def get_submission_details(submission_id):
 
     query = """
-    query submissionDetails(
-        $submissionId: Int!
-    ) {
-
-        submissionDetails(
-            submissionId: $submissionId
-        ) {
-
+    query submissionDetails($submissionId: Int!) {
+        submissionDetails(submissionId: $submissionId) {
             code
 
             lang {
                 name
                 verboseName
             }
+
+            runtime
+            runtimeDisplay
+            memory
+            memoryDisplay
+
+            runtimePercentile
+            memoryPercentile
         }
     }
     """
+
+    variables = {
+        "submissionId": int(submission_id)
+    }
 
     data = graphql(
         "submissionDetails",
         query,
-        {
-            "submissionId": int(
-                submission_id
-            )
-        }
+        variables
     )
 
     if not data:
-
         return None
 
-    return data.get(
-        "submissionDetails"
-    )
+    return data.get("submissionDetails")
 
 
-# =========================================================
+# ============================================================
 # LANGUAGE → FILE EXTENSION
-# =========================================================
+# ============================================================
 
-def extension_for_language(
-    language
-):
+LANGUAGE_EXTENSIONS = {
 
-    extensions = {
+    "python": ".py",
+    "python3": ".py",
 
-        "python": "py",
-        "python3": "py",
+    "java": ".java",
 
-        "java": "java",
+    "cpp": ".cpp",
+    "c++": ".cpp",
 
-        "cpp": "cpp",
-        "c++": "cpp",
+    "c": ".c",
 
-        "c": "c",
+    "javascript": ".js",
+    "typescript": ".ts",
 
-        "javascript": "js",
-        "typescript": "ts",
+    "kotlin": ".kt",
 
-        "kotlin": "kt",
+    "swift": ".swift",
 
-        "swift": "swift",
+    "go": ".go",
 
-        "go": "go",
-        "golang": "go",
+    "rust": ".rs",
 
-        "rust": "rs",
+    "ruby": ".rb",
 
-        "php": "php",
+    "php": ".php",
 
-        "csharp": "cs",
-        "c#": "cs",
+    "scala": ".scala",
 
-        "ruby": "rb",
+    "dart": ".dart",
 
-        "scala": "scala",
+    "csharp": ".cs",
+    "c#": ".cs",
+}
 
-        "mysql": "sql",
 
-        "bash": "sh",
-    }
+# ============================================================
+# CLEAN TITLE
+# ============================================================
 
-    return extensions.get(
-        language.lower(),
-        "txt"
+def clean_title(title):
+
+    title = title.lower()
+
+    title = re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        title
     )
 
+    title = title.strip("-")
 
-# =========================================================
-# FIND EXISTING NUMBERED FOLDER
-# =========================================================
-
-def find_numbered_folder(slug):
-
-    """
-    Search for an existing folder such as:
-
-        0141-linked-list-cycle
-
-    for:
-
-        linked-list-cycle
-    """
-
-    if not DESTINATION.exists():
-
-        return None
-
-    suffix = f"-{slug}"
-
-    for folder in DESTINATION.iterdir():
-
-        if not folder.is_dir():
-
-            continue
-
-        name = folder.name
-
-        if name.endswith(suffix):
-
-            prefix = name[
-                :-len(suffix)
-            ]
-
-            if prefix.isdigit():
-
-                return folder
-
-    return None
+    return title
 
 
-# =========================================================
-# MERGE DUPLICATE FOLDER
-# =========================================================
+# ============================================================
+# CREATE NUMBERED FOLDER NAME
+# ============================================================
 
-def merge_duplicate_folder(
-    old_folder,
-    numbered_folder
-):
+def create_folder_name(question_id, title):
 
-    """
-    Example:
+    number = str(question_id).zfill(4)
 
-        old:
-        majority-element/
+    clean = clean_title(title)
 
-        numbered:
-        0169-majority-element/
+    return f"{number}-{clean}"
 
-    Result:
 
-        0169-majority-element/
+# ============================================================
+# FIND OLD UNNUMBERED DUPLICATE
+#
+# Example:
+#
+# Old:
+# merge-sorted-array/
+#
+# New:
+# 0088-merge-sorted-array/
+#
+# We migrate the contents and remove the duplicate folder.
+# ============================================================
 
-    The old folder is completely removed.
-    """
+def merge_duplicate_folder(numbered_folder, title):
 
-    print(
-        "   🔄 Merging duplicate folder:"
-    )
+    old_folder = DESTINATION / clean_title(title)
 
-    print(
-        f"      {old_folder.name}"
-    )
+    if (
+        old_folder.exists()
+        and old_folder.is_dir()
+        and old_folder != numbered_folder
+    ):
 
-    print(
-        f"      → {numbered_folder.name}"
-    )
-
-    # -----------------------------------------------------
-    # Make sure target folder exists
-    # -----------------------------------------------------
-
-    numbered_folder.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    # -----------------------------------------------------
-    # Move missing files
-    # -----------------------------------------------------
-
-    for item in old_folder.iterdir():
-
-        destination = (
-            numbered_folder / item.name
+        print(
+            f"🔄 Duplicate folder found: "
+            f"{old_folder.name}"
         )
 
-        if not destination.exists():
+        numbered_folder.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        # Move files from old folder into numbered folder
+        for item in old_folder.iterdir():
+
+            destination = numbered_folder / item.name
+
+            if destination.exists():
+                continue
 
             shutil.move(
                 str(item),
                 str(destination)
             )
 
-            print(
-                f"      📦 Moved: "
-                f"{item.name}"
-            )
-
-        else:
-
-            print(
-                f"      ⏭️ Kept existing: "
-                f"{item.name}"
-            )
-
-    # -----------------------------------------------------
-    # Delete old duplicate folder
-    # -----------------------------------------------------
-
-    if old_folder.exists():
-
-        shutil.rmtree(
-            old_folder
-        )
+        # Remove the old folder completely
+        shutil.rmtree(old_folder)
 
         print(
-            f"      🗑️ Removed duplicate: "
+            f"   ✅ Removed duplicate: "
             f"{old_folder.name}"
         )
 
+        return True
 
-# =========================================================
+    return False
+
+
+# ============================================================
+# SAVE SOLUTION
+# ============================================================
+
+def save_solution(
+    submission,
+    details,
+    question_id
+):
+
+    title = submission["title"]
+    slug = submission["titleSlug"]
+
+    folder_name = create_folder_name(
+        question_id,
+        title
+    )
+
+    folder = DESTINATION / folder_name
+
+    folder.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # --------------------------------------------------------
+    # Language
+    # --------------------------------------------------------
+
+    language = "unknown"
+
+    if details.get("lang"):
+        language = (
+            details["lang"].get("name")
+            or details["lang"].get("verboseName")
+            or "unknown"
+        )
+
+    language_lower = language.lower()
+
+    extension = LANGUAGE_EXTENSIONS.get(
+        language_lower,
+        ".txt"
+    )
+
+    # --------------------------------------------------------
+    # Code
+    # --------------------------------------------------------
+
+    code = details.get("code", "")
+
+    if not code:
+        print(
+            f"⚠️ No code found for {title}"
+        )
+        return False
+
+    solution_file = folder / f"solution{extension}"
+
+    # --------------------------------------------------------
+    # Check if this exact solution already exists
+    # --------------------------------------------------------
+
+    if solution_file.exists():
+
+        existing_code = solution_file.read_text(
+            encoding="utf-8"
+        )
+
+        if existing_code.strip() == code.strip():
+
+            return False
+
+    # --------------------------------------------------------
+    # Save solution
+    # --------------------------------------------------------
+
+    solution_file.write_text(
+        code,
+        encoding="utf-8"
+    )
+
+    # --------------------------------------------------------
+    # README
+    # --------------------------------------------------------
+
+    readme_file = folder / "README.md"
+
+    if not readme_file.exists():
+
+        readme_content = f"""# {title}
+
+- **LeetCode:** Problem #{question_id}
+- **Language:** {language}
+- **Difficulty:** Automatically synced from LeetCode
+- **Problem:** https://leetcode.com/problems/{slug}/
+
+## Solution
+
+The solution is automatically synchronized from LeetCode.
+"""
+
+        readme_file.write_text(
+            readme_content,
+            encoding="utf-8"
+        )
+
+    print(
+        f"✅ Saved: "
+        f"{folder_name}/solution{extension}"
+    )
+
+    return True
+
+
+# ============================================================
+# CREATE OLD-STYLE COMMIT MESSAGE
+#
+# Example:
+#
+# [LeetCode Sync] Runtime - 0 ms (100.00%), Memory - 19.2 MB (58.28%)
+# ============================================================
+
+def create_commit_message(details):
+
+    runtime_display = details.get(
+        "runtimeDisplay"
+    )
+
+    memory_display = details.get(
+        "memoryDisplay"
+    )
+
+    runtime_percentile = details.get(
+        "runtimePercentile"
+    )
+
+    memory_percentile = details.get(
+        "memoryPercentile"
+    )
+
+    # --------------------------------------------------------
+    # Runtime
+    # --------------------------------------------------------
+
+    if not runtime_display:
+
+        runtime = details.get("runtime")
+
+        if runtime is not None:
+            runtime_display = f"{runtime} ms"
+        else:
+            runtime_display = "N/A"
+
+    # --------------------------------------------------------
+    # Memory
+    # --------------------------------------------------------
+
+    if not memory_display:
+
+        memory = details.get("memory")
+
+        if memory is not None:
+            memory_display = f"{memory} MB"
+        else:
+            memory_display = "N/A"
+
+    # --------------------------------------------------------
+    # Percentiles
+    # --------------------------------------------------------
+
+    if runtime_percentile is not None:
+
+        runtime_percentile_text = (
+            f"{float(runtime_percentile):.2f}%"
+        )
+
+    else:
+        runtime_percentile_text = "N/A"
+
+    if memory_percentile is not None:
+
+        memory_percentile_text = (
+            f"{float(memory_percentile):.2f}%"
+        )
+
+    else:
+        memory_percentile_text = "N/A"
+
+    # --------------------------------------------------------
+    # OLD FORMAT
+    # --------------------------------------------------------
+
+    commit_message = (
+        f"[LeetCode Sync] "
+        f"Runtime - {runtime_display} "
+        f"({runtime_percentile_text}), "
+        f"Memory - {memory_display} "
+        f"({memory_percentile_text})"
+    )
+
+    return commit_message
+
+
+# ============================================================
 # MAIN
-# =========================================================
+# ============================================================
 
 def main():
 
-    print("=" * 60)
+    print("🚀 Starting LeetCode Sync...\n")
 
-    print(
-        "🚀 LeetCode → GitHub Sync"
-    )
+    # --------------------------------------------------------
+    # Authenticate
+    # --------------------------------------------------------
 
-    print("=" * 60)
+    user = get_user()
 
-    print()
-
-    # -----------------------------------------------------
-    # Authentication
-    # -----------------------------------------------------
-
-    print(
-        "🔐 Connecting to LeetCode..."
-    )
-
-    username = get_user()
-
-    if not username:
-
-        print(
-            "❌ Authentication failed."
+    if not user:
+        raise Exception(
+            "❌ Unable to authenticate with LeetCode."
         )
 
-        raise SystemExit(1)
+    if not user.get("isSignedIn"):
+        raise Exception(
+            "❌ LeetCode session is not signed in."
+        )
 
-    print()
+    username = user.get("username")
 
-    # -----------------------------------------------------
+    print(
+        f"🔐 Signed in: "
+        f"{user.get('isSignedIn')}"
+    )
+
+    print(
+        f"👤 LeetCode user: "
+        f"{username}"
+    )
+
+    # --------------------------------------------------------
     # Get submissions
-    # -----------------------------------------------------
+    # --------------------------------------------------------
 
     submissions = get_recent_submissions(
         username
     )
-
-    print()
 
     print(
         f"📊 Found {len(submissions)} "
@@ -585,16 +606,8 @@ def main():
     )
 
     if not submissions:
-
-        print(
-            "⚠️ No accepted submissions found."
-        )
-
+        print("ℹ️ No submissions found.")
         return
-
-    # -----------------------------------------------------
-    # Create destination folder
-    # -----------------------------------------------------
 
     DESTINATION.mkdir(
         parents=True,
@@ -602,41 +615,58 @@ def main():
     )
 
     synced = 0
-    skipped = 0
-    migrated = 0
+    already_synced = 0
     failed = 0
+    migrated = 0
 
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Store the commit message of the newest newly synced
+    # submission.
+    #
+    # Usually there will be only one new submission since
+    # the previous scheduled run.
+    # --------------------------------------------------------
+
+    newest_commit_message = None
+
+    # --------------------------------------------------------
     # Process submissions
-    # -----------------------------------------------------
+    # --------------------------------------------------------
 
     for submission in submissions:
 
-        submission_id = submission[
-            "id"
-        ]
+        title = submission.get(
+            "title",
+            "Unknown Problem"
+        )
 
-        title = submission[
-            "title"
-        ]
-
-        slug = submission[
+        slug = submission.get(
             "titleSlug"
-        ]
+        )
 
-        print()
-
-        print(
-            f"➡️ {title}"
+        submission_id = submission.get(
+            "id"
         )
 
         print(
-            f"   Slug: {slug}"
+            f"\n🔍 Processing: "
+            f"{title}"
         )
 
-        # -------------------------------------------------
+        if not slug or not submission_id:
+
+            print(
+                "❌ Missing submission information."
+            )
+
+            failed += 1
+            continue
+
+        # ----------------------------------------------------
         # Get problem number
-        # -------------------------------------------------
+        # ----------------------------------------------------
 
         question_id = get_problem_number(
             slug
@@ -645,123 +675,16 @@ def main():
         if not question_id:
 
             print(
-                "   ❌ Could not determine "
-                "problem number."
+                f"❌ Could not find problem number "
+                f"for {title}"
             )
 
             failed += 1
-
             continue
 
-        # -------------------------------------------------
-        # Format number
-        #
-        # 3   → 0003
-        # 26  → 0026
-        # 141 → 0141
-        # 1000 → 1000
-        # -------------------------------------------------
-
-        problem_number = str(
-            question_id
-        ).zfill(4)
-
-        numbered_name = (
-            f"{problem_number}-{slug}"
-        )
-
-        numbered_folder = (
-            DESTINATION / numbered_name
-        )
-
-        old_folder = (
-            DESTINATION / slug
-        )
-
-        print(
-            f"   📁 Target: "
-            f"{numbered_name}"
-        )
-
-        # -------------------------------------------------
-        # Handle old unnumbered folder
-        # -------------------------------------------------
-
-        if (
-            old_folder.exists()
-            and old_folder != numbered_folder
-        ):
-
-            # ---------------------------------------------
-            # Both folders exist
-            # ---------------------------------------------
-
-            if numbered_folder.exists():
-
-                merge_duplicate_folder(
-                    old_folder,
-                    numbered_folder
-                )
-
-                migrated += 1
-
-            # ---------------------------------------------
-            # Only old folder exists
-            # ---------------------------------------------
-
-            else:
-
-                print(
-                    "   🔄 Renaming:"
-                )
-
-                print(
-                    f"      {old_folder.name}"
-                )
-
-                print(
-                    f"      → "
-                    f"{numbered_folder.name}"
-                )
-
-                old_folder.rename(
-                    numbered_folder
-                )
-
-                migrated += 1
-
-        # -------------------------------------------------
-        # Make sure target exists
-        # -------------------------------------------------
-
-        numbered_folder.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
-        # -------------------------------------------------
-        # Check existing solution
-        # -------------------------------------------------
-
-        existing_solution = list(
-            numbered_folder.glob(
-                "solution.*"
-            )
-        )
-
-        if existing_solution:
-
-            print(
-                "   ⏭️ Already synced."
-            )
-
-            skipped += 1
-
-            continue
-
-        # -------------------------------------------------
-        # Get submitted code
-        # -------------------------------------------------
+        # ----------------------------------------------------
+        # Get submission details
+        # ----------------------------------------------------
 
         details = get_submission_details(
             submission_id
@@ -770,137 +693,125 @@ def main():
         if not details:
 
             print(
-                "   ❌ Could not retrieve "
-                "submission code."
+                f"❌ Could not get submission details "
+                f"for {title}"
             )
 
             failed += 1
-
             continue
 
-        code = details.get(
-            "code"
+        # ----------------------------------------------------
+        # Numbered folder
+        # ----------------------------------------------------
+
+        folder_name = create_folder_name(
+            question_id,
+            title
         )
 
-        language_info = details.get(
-            "lang"
+        numbered_folder = (
+            DESTINATION / folder_name
         )
 
-        if not code:
+        # ----------------------------------------------------
+        # Remove/migrate old unnumbered duplicate
+        # ----------------------------------------------------
+
+        if merge_duplicate_folder(
+            numbered_folder,
+            title
+        ):
+
+            migrated += 1
+
+        # ----------------------------------------------------
+        # Save solution
+        # ----------------------------------------------------
+
+        try:
+
+            saved = save_solution(
+                submission,
+                details,
+                question_id
+            )
+
+            if saved:
+
+                synced += 1
+
+                # --------------------------------------------
+                # Create old-style commit message
+                # --------------------------------------------
+
+                newest_commit_message = (
+                    create_commit_message(
+                        details
+                    )
+                )
+
+                print(
+                    f"📝 Commit message:\n"
+                    f"   {newest_commit_message}"
+                )
+
+            else:
+
+                already_synced += 1
+
+        except Exception as e:
 
             print(
-                "   ❌ Submission code is empty."
+                f"❌ Failed to save {title}: "
+                f"{e}"
             )
 
             failed += 1
 
-            continue
+    # --------------------------------------------------------
+    # WRITE COMMIT MESSAGE FOR GITHUB ACTION
+    # --------------------------------------------------------
 
-        # -------------------------------------------------
-        # Determine language
-        # -------------------------------------------------
+    if newest_commit_message:
 
-        if language_info:
-
-            language = language_info.get(
-                "name",
-                "unknown"
-            )
-
-        else:
-
-            language = "unknown"
-
-        extension = (
-            extension_for_language(
-                language
-            )
+        commit_file = Path(
+            "commit_message.txt"
         )
 
-        # -------------------------------------------------
-        # Save solution
-        # -------------------------------------------------
-
-        solution_file = (
-            numbered_folder
-            / f"solution.{extension}"
-        )
-
-        solution_file.write_text(
-            code,
+        commit_file.write_text(
+            newest_commit_message,
             encoding="utf-8"
         )
 
         print(
-            f"   💾 Saved: "
-            f"{solution_file}"
+            "\n📝 Commit message prepared."
         )
 
-        # -------------------------------------------------
-        # Create README if missing
-        # -------------------------------------------------
+    else:
 
-        readme_file = (
-            numbered_folder
-            / "README.md"
+        # Remove old commit message file if there
+        # are no new solutions.
+        commit_file = Path(
+            "commit_message.txt"
         )
 
-        if not readme_file.exists():
+        if commit_file.exists():
+            commit_file.unlink()
 
-            readme_file.write_text(
-                f"""# {title}
+    # --------------------------------------------------------
+    # SUMMARY
+    # --------------------------------------------------------
 
-## LeetCode
-
-https://leetcode.com/problems/{slug}/
-
-## Problem Number
-
-{question_id}
-
-## Language
-
-{language}
-
-## Submission ID
-
-{submission_id}
-""",
-                encoding="utf-8"
-            )
-
-            print(
-                "   📄 README.md created."
-            )
-
-        else:
-
-            print(
-                "   ⏭️ Existing README kept."
-            )
-
-        synced += 1
-
-    # -----------------------------------------------------
-    # FINAL SUMMARY
-    # -----------------------------------------------------
-
-    print()
-
-    print("=" * 60)
+    print("\n" + "=" * 50)
+    print("📋 SYNC SUMMARY")
+    print("=" * 50)
 
     print(
-        "📋 SYNC SUMMARY"
-    )
-
-    print("=" * 60)
-
-    print(
-        f"✅ Newly synced : {synced}"
+        f"✅ Synced       : {synced}"
     )
 
     print(
-        f"⏭️ Already synced: {skipped}"
+        f"✔️ Already synced: {already_synced}"
     )
 
     print(
@@ -911,13 +822,12 @@ https://leetcode.com/problems/{slug}/
         f"❌ Failed       : {failed}"
     )
 
-    print("=" * 60)
+    print("=" * 50)
 
 
-# =========================================================
+# ============================================================
 # RUN
-# =========================================================
+# ============================================================
 
 if __name__ == "__main__":
-
     main()
