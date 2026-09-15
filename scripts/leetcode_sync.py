@@ -1,11 +1,13 @@
 import os
-import json
 import requests
 from pathlib import Path
 
 
+# ---------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------
+
 LEETCODE_URL = "https://leetcode.com/graphql"
-GITHUB_REPO = os.environ["GITHUB_REPOSITORY"]
 
 SESSION = os.environ["LEETCODE_SESSION"]
 CSRF_TOKEN = os.environ["LEETCODE_CSRF_TOKEN"]
@@ -13,13 +15,9 @@ CSRF_TOKEN = os.environ["LEETCODE_CSRF_TOKEN"]
 DESTINATION = Path("solutions")
 
 
-headers = {
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0",
-    "x-csrftoken": CSRF_TOKEN,
-    "Referer": "https://leetcode.com/",
-}
-
+# ---------------------------------------------------------
+# Create LeetCode session
+# ---------------------------------------------------------
 
 session = requests.Session()
 
@@ -35,14 +33,26 @@ session.cookies.set(
     domain=".leetcode.com"
 )
 
+headers = {
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0",
+    "Referer": "https://leetcode.com/",
+    "x-csrftoken": CSRF_TOKEN,
+}
 
-def graphql(query, variables):
+
+# ---------------------------------------------------------
+# GraphQL request function
+# ---------------------------------------------------------
+
+def graphql(query, variables=None):
+
     response = session.post(
         LEETCODE_URL,
         headers=headers,
         json={
             "query": query,
-            "variables": variables,
+            "variables": variables or {},
         },
         timeout=30,
     )
@@ -52,26 +62,46 @@ def graphql(query, variables):
     data = response.json()
 
     if "errors" in data:
-        raise Exception(json.dumps(data["errors"], indent=2))
+        print("❌ LeetCode API error:")
+        print(data["errors"])
+        return None
 
-    return data["data"]
+    return data.get("data")
 
+
+# ---------------------------------------------------------
+# Get current user
+# ---------------------------------------------------------
 
 def get_user():
+
     query = """
-    query globalData {
-        userStatus {
+    query {
+        whoami {
             username
         }
     }
     """
 
-    data = graphql(query, {})
+    data = graphql(query)
 
-    return data["userStatus"]["username"]
+    if not data:
+        return None
 
+    whoami = data.get("whoami")
+
+    if not whoami:
+        return None
+
+    return whoami.get("username")
+
+
+# ---------------------------------------------------------
+# Get recent accepted submissions
+# ---------------------------------------------------------
 
 def get_recent_submissions(username):
+
     query = """
     query recentAcSubmissions(
         $username: String!,
@@ -94,17 +124,30 @@ def get_recent_submissions(username):
         {
             "username": username,
             "limit": 20,
-        },
+        }
     )
+
+    if not data:
+        return []
 
     return data.get("recentAcSubmissionList") or []
 
 
+# ---------------------------------------------------------
+# Get submission code
+# ---------------------------------------------------------
+
 def get_submission_details(submission_id):
+
     query = """
     query submissionDetails($submissionId: Int!) {
-        submissionDetails(submissionId: $submissionId) {
+
+        submissionDetails(
+            submissionId: $submissionId
+        ) {
+
             code
+
             lang {
                 name
                 verboseName
@@ -116,42 +159,76 @@ def get_submission_details(submission_id):
     data = graphql(
         query,
         {
-            "submissionId": int(submission_id),
-        },
+            "submissionId": int(submission_id)
+        }
     )
+
+    if not data:
+        return None
 
     return data.get("submissionDetails")
 
 
+# ---------------------------------------------------------
+# Convert language to file extension
+# ---------------------------------------------------------
+
 def extension_for_language(language):
+
     extensions = {
+
         "python": "py",
         "python3": "py",
+
         "java": "java",
+
         "cpp": "cpp",
+        "c++": "cpp",
+
         "c": "c",
+
         "javascript": "js",
         "typescript": "ts",
+
         "kotlin": "kt",
+
         "swift": "swift",
+
         "go": "go",
+
         "rust": "rs",
+
         "php": "php",
+
         "csharp": "cs",
+
         "ruby": "rb",
     }
 
-    return extensions.get(language.lower(), "txt")
+    return extensions.get(
+        language.lower(),
+        "txt"
+    )
 
+
+# ---------------------------------------------------------
+# Clean problem slug
+# ---------------------------------------------------------
 
 def clean_title(title):
+
     return (
-        title.lower()
+        title
+        .lower()
         .replace(" ", "-")
         .replace("/", "-")
         .replace(":", "")
     )
 
+
+# ---------------------------------------------------------
+# Main
+# ---------------------------------------------------------
 
 def main():
 
@@ -159,59 +236,106 @@ def main():
 
     username = get_user()
 
+    if not username:
+
+        print("❌ Could not get LeetCode username.")
+        print()
+        print("Possible reasons:")
+        print("1. LEETCODE_SESSION expired")
+        print("2. CSRF token expired")
+        print("3. LeetCode API changed")
+        print()
+        return
+
     print(f"👤 LeetCode user: {username}")
 
     submissions = get_recent_submissions(username)
 
-    print(f"📥 Found {len(submissions)} recent accepted submissions")
+    print(
+        f"📥 Found {len(submissions)} "
+        f"recent accepted submissions"
+    )
+
+    if not submissions:
+
+        print("⚠️ No submissions found.")
+
+        return
 
     DESTINATION.mkdir(
         parents=True,
         exist_ok=True
     )
 
+    # -----------------------------------------------------
+    # Process each submission
+    # -----------------------------------------------------
+
     for submission in submissions:
 
         submission_id = submission["id"]
+
         title = submission["title"]
+
         slug = submission["titleSlug"]
 
+        print()
         print(
-            f"➡️ Processing: {title} "
-            f"(submission {submission_id})"
+            f"➡️ Processing: {title}"
         )
 
-        problem_folder = DESTINATION / slug
+        problem_folder = (
+            DESTINATION / slug
+        )
 
         problem_folder.mkdir(
             parents=True,
             exist_ok=True
         )
 
-        # Do not overwrite an existing solution
-        existing_files = list(problem_folder.iterdir())
+        # -------------------------------------------------
+        # Don't overwrite existing solution
+        # -------------------------------------------------
+
+        existing_files = list(
+            problem_folder.iterdir()
+        )
 
         if existing_files:
-            print(f"   ⏭️ Already synced: {slug}")
+
+            print(
+                f"   ⏭️ Already synced: {slug}"
+            )
+
             continue
+
+        # -------------------------------------------------
+        # Get actual submitted code
+        # -------------------------------------------------
 
         details = get_submission_details(
             submission_id
         )
 
         if not details:
+
             print(
-                f"   ⚠️ Could not retrieve code for {title}"
+                "   ⚠️ Could not retrieve code"
             )
+
             continue
 
-        code = details["code"]
+        code = details.get("code")
 
         language = details["lang"]["name"]
 
         extension = extension_for_language(
             language
         )
+
+        # -------------------------------------------------
+        # Save solution
+        # -------------------------------------------------
 
         solution_file = (
             problem_folder
@@ -223,21 +347,37 @@ def main():
             encoding="utf-8"
         )
 
-        readme = problem_folder / "README.md"
+        print(
+            f"   ✅ Saved: {solution_file}"
+        )
+
+        # -------------------------------------------------
+        # Create README
+        # -------------------------------------------------
+
+        readme = (
+            problem_folder
+            / "README.md"
+        )
 
         readme.write_text(
             f"# {title}\n\n"
             f"- **LeetCode:** "
             f"https://leetcode.com/problems/{slug}/\n"
             f"- **Language:** {language}\n"
-            f"- **Submission ID:** {submission_id}\n",
+            f"- **Submission ID:** "
+            f"{submission_id}\n",
             encoding="utf-8"
         )
 
         print(
-            f"   ✅ Saved: {solution_file}"
+            f"   📄 Created README.md"
         )
 
+
+# ---------------------------------------------------------
+# Run
+# ---------------------------------------------------------
 
 if __name__ == "__main__":
     main()
