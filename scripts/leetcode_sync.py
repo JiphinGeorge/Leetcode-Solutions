@@ -35,6 +35,10 @@ session.cookies.set(
 )
 
 
+# =========================================================
+# HEADERS
+# =========================================================
+
 HEADERS = {
     "Content-Type": "application/json",
 
@@ -73,6 +77,10 @@ def graphql(
         timeout=30,
     )
 
+    # -----------------------------------------------------
+    # HTTP error
+    # -----------------------------------------------------
+
     if response.status_code != 200:
 
         print(
@@ -80,11 +88,21 @@ def graphql(
             f"{response.status_code}"
         )
 
-        print(response.text[:1000])
+        print(
+            response.text[:1000]
+        )
 
         response.raise_for_status()
 
+    # -----------------------------------------------------
+    # Convert response to JSON
+    # -----------------------------------------------------
+
     result = response.json()
+
+    # -----------------------------------------------------
+    # GraphQL error
+    # -----------------------------------------------------
 
     if result.get("errors"):
 
@@ -132,6 +150,7 @@ def get_user():
     )
 
     if not data:
+
         return None
 
     user_status = data.get(
@@ -236,11 +255,6 @@ def get_recent_submissions(username):
 
 def get_problem_number(slug):
 
-    """
-    Gets the numerical LeetCode problem ID
-    using its titleSlug.
-    """
-
     query = """
     query questionData(
         $titleSlug: String!
@@ -334,7 +348,7 @@ def get_submission_details(
 
 
 # =========================================================
-# LANGUAGE EXTENSIONS
+# LANGUAGE → FILE EXTENSION
 # =========================================================
 
 def extension_for_language(
@@ -392,13 +406,13 @@ def extension_for_language(
 def find_numbered_folder(slug):
 
     """
-    Looks for an existing folder such as:
+    Search for an existing folder such as:
 
-    0141-linked-list-cycle
+        0141-linked-list-cycle
 
-    that corresponds to:
+    for:
 
-    linked-list-cycle
+        linked-list-cycle
     """
 
     if not DESTINATION.exists():
@@ -417,9 +431,10 @@ def find_numbered_folder(slug):
 
         if name.endswith(suffix):
 
-            prefix = name[:-len(suffix)]
+            prefix = name[
+                :-len(suffix)
+            ]
 
-            # Make sure the prefix is numeric
             if prefix.isdigit():
 
                 return folder
@@ -428,7 +443,7 @@ def find_numbered_folder(slug):
 
 
 # =========================================================
-# CLEAN DUPLICATE FOLDER
+# MERGE DUPLICATE FOLDER
 # =========================================================
 
 def merge_duplicate_folder(
@@ -437,21 +452,23 @@ def merge_duplicate_folder(
 ):
 
     """
-    If both folders exist:
+    Example:
 
-        linked-list-cycle/
-        0141-linked-list-cycle/
+        old:
+        majority-element/
 
-    keep the numbered folder.
+        numbered:
+        0169-majority-element/
 
-    Any files that exist only in the old folder
-    are copied into the numbered folder.
+    Result:
 
-    Then the old folder is removed.
+        0169-majority-element/
+
+    The old folder is completely removed.
     """
 
     print(
-        f"   🔄 Merging duplicate folder:"
+        "   🔄 Merging duplicate folder:"
     )
 
     print(
@@ -462,10 +479,18 @@ def merge_duplicate_folder(
         f"      → {numbered_folder.name}"
     )
 
+    # -----------------------------------------------------
+    # Make sure target folder exists
+    # -----------------------------------------------------
+
     numbered_folder.mkdir(
         parents=True,
         exist_ok=True
     )
+
+    # -----------------------------------------------------
+    # Move missing files
+    # -----------------------------------------------------
 
     for item in old_folder.iterdir():
 
@@ -473,8 +498,6 @@ def merge_duplicate_folder(
             numbered_folder / item.name
         )
 
-        # If the file does not already exist,
-        # move it to the numbered folder.
         if not destination.exists():
 
             shutil.move(
@@ -483,7 +506,8 @@ def merge_duplicate_folder(
             )
 
             print(
-                f"      📦 Moved: {item.name}"
+                f"      📦 Moved: "
+                f"{item.name}"
             )
 
         else:
@@ -493,20 +517,18 @@ def merge_duplicate_folder(
                 f"{item.name}"
             )
 
-    # Remove old empty folder
-    try:
+    # -----------------------------------------------------
+    # Delete old duplicate folder
+    # -----------------------------------------------------
 
-        old_folder.rmdir()
+    if old_folder.exists():
 
-        print(
-            f"      🗑️ Removed: "
-            f"{old_folder.name}"
+        shutil.rmtree(
+            old_folder
         )
 
-    except OSError:
-
         print(
-            f"      ⚠️ Could not remove "
+            f"      🗑️ Removed duplicate: "
             f"{old_folder.name}"
         )
 
@@ -548,7 +570,7 @@ def main():
     print()
 
     # -----------------------------------------------------
-    # Get recent submissions
+    # Get submissions
     # -----------------------------------------------------
 
     submissions = get_recent_submissions(
@@ -569,6 +591,10 @@ def main():
         )
 
         return
+
+    # -----------------------------------------------------
+    # Create destination folder
+    # -----------------------------------------------------
 
     DESTINATION.mkdir(
         parents=True,
@@ -627,11 +653,14 @@ def main():
 
             continue
 
-        # Convert to 4-digit format
+        # -------------------------------------------------
+        # Format number
         #
+        # 3   → 0003
         # 26  → 0026
         # 141 → 0141
         # 1000 → 1000
+        # -------------------------------------------------
 
         problem_number = str(
             question_id
@@ -650,11 +679,12 @@ def main():
         )
 
         print(
-            f"   📁 Target: {numbered_name}"
+            f"   📁 Target: "
+            f"{numbered_name}"
         )
 
         # -------------------------------------------------
-        # If old unnumbered folder exists
+        # Handle old unnumbered folder
         # -------------------------------------------------
 
         if (
@@ -662,8 +692,10 @@ def main():
             and old_folder != numbered_folder
         ):
 
-            # If numbered folder already exists,
-            # merge the two.
+            # ---------------------------------------------
+            # Both folders exist
+            # ---------------------------------------------
+
             if numbered_folder.exists():
 
                 merge_duplicate_folder(
@@ -673,11 +705,14 @@ def main():
 
                 migrated += 1
 
+            # ---------------------------------------------
+            # Only old folder exists
+            # ---------------------------------------------
+
             else:
 
-                # Simply rename the folder.
                 print(
-                    f"   🔄 Renaming:"
+                    "   🔄 Renaming:"
                 )
 
                 print(
@@ -696,7 +731,7 @@ def main():
                 migrated += 1
 
         # -------------------------------------------------
-        # Create numbered folder
+        # Make sure target exists
         # -------------------------------------------------
 
         numbered_folder.mkdir(
@@ -802,7 +837,7 @@ def main():
         )
 
         # -------------------------------------------------
-        # Create README only if missing
+        # Create README if missing
         # -------------------------------------------------
 
         readme_file = (
@@ -847,7 +882,7 @@ https://leetcode.com/problems/{slug}/
         synced += 1
 
     # -----------------------------------------------------
-    # Summary
+    # FINAL SUMMARY
     # -----------------------------------------------------
 
     print()
